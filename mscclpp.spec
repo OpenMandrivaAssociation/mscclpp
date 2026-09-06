@@ -9,6 +9,7 @@ Group:		System/Libraries
 URL:		https://github.com/microsoft/mscclpp
 Source0:	https://github.com/microsoft/mscclpp/archive/refs/tags/v%{version}.tar.gz#/mscclpp-%{version}.tar.gz
 Patch0:		0001-system-nlohmann-json.patch
+Patch1:		0002-nccl-cstring.patch
 
 BuildRequires:	rocm-rpm-macros
 BuildRequires:	cmake

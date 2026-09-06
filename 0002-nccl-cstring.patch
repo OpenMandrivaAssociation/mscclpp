@@ -1,0 +1,13 @@
+Include cstring/cstdlib; nccl.cc uses strcmp/strdup/memcpy without them.
+
+--- a/src/ext/nccl/nccl.cc
++++ b/src/ext/nccl/nccl.cc
+@@ -2,6 +2,8 @@
+ // Licensed under the MIT License.
+ 
+ #include <algorithm>
++#include <cstring>
++#include <cstdlib>
+ #include <filesystem>
+ #include <functional>
+ #include <mscclpp/core.hpp>
