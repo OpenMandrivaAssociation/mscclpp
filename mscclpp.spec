@@ -41,12 +41,8 @@ export CC=clang
 CXXFLAGS=$(printf '%s' "%{optflags}" | sed 's/-mfpmath=sse//g')
 export CXXFLAGS
 %cmake %{rocm_cmake_fhs} \
-	-DAMDGPU_TARGETS="gfx1100;gfx1101;gfx1200;gfx1201" \
-	-DGPU_TARGETS="gfx1100;gfx1101;gfx1200;gfx1201" \
 	-DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_CXX_COMPILER=hipcc \
-	-DCMAKE_HIP_COMPILER=clang++ \
-	-DCMAKE_HIP_ARCHITECTURES="gfx1100;gfx1101;gfx1200;gfx1201" \
 	-DCMAKE_CXX_FLAGS="$CXXFLAGS" \
 	-DMSCCLPP_USE_ROCM=ON \
 	-DMSCCLPP_USE_CUDA=OFF \
