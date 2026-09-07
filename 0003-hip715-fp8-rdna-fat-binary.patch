@@ -1,0 +1,100 @@
+HIP 7.15 fp8 host/device split for fat gfx942+gfx12 binaries.
+
+OCP constructors are __host__-only on gfx942; FNUZ ones are
+__host__-only on gfx1200/1201. Convert via gfx942 builtins or
+OCP constructors so RDNA3/4 can be compiled in the same DSO.
+
+--- a/include/mscclpp/gpu_data_types.hpp
++++ b/include/mscclpp/gpu_data_types.hpp
+@@ -305,6 +305,42 @@
+   return u.t;
+ }
+ 
++#if defined(__FP8_TYPES_EXIST__) && defined(MSCCLPP_DEVICE_HIP)
++// HIP 7.15: OCP constructors/conversions are __host__-only on gfx942;
++// FNUZ ones are __host__-only on gfx1200/1201. Use gfx942 builtins vs
++// OCP constructors so one fat binary can include CDNA and RDNA.
++MSCCLPP_DEVICE_INLINE float mscclpp_fp8e4_to_f32(__fp8_e4m3 v) {
++#if defined(__gfx942__)
++  return __builtin_amdgcn_cvt_pk_f32_fp8(static_cast<uint32_t>(v.__x), false).x;
++#else
++  return static_cast<float>(v);
++#endif
++}
++MSCCLPP_DEVICE_INLINE __fp8_e4m3 mscclpp_f32_to_fp8e4(float f) {
++#if defined(__gfx942__)
++  uint32_t packed = __builtin_amdgcn_cvt_pk_fp8_f32(f, f, 0, false);
++  return bit_cast<__fp8_e4m3>(static_cast<__hip_fp8_storage_t>(packed));
++#else
++  return __fp8_e4m3(f);
++#endif
++}
++MSCCLPP_DEVICE_INLINE float mscclpp_fp8e5_to_f32(__fp8_e5m2 v) {
++#if defined(__gfx942__)
++  return __builtin_amdgcn_cvt_pk_f32_bf8(static_cast<uint32_t>(v.__x), false).x;
++#else
++  return static_cast<float>(v);
++#endif
++}
++MSCCLPP_DEVICE_INLINE __fp8_e5m2 mscclpp_f32_to_fp8e5(float f) {
++#if defined(__gfx942__)
++  uint32_t packed = __builtin_amdgcn_cvt_pk_bf8_f32(f, f, 0, false);
++  return bit_cast<__fp8_e5m2>(static_cast<__hip_fp8_storage_t>(packed));
++#else
++  return __fp8_e5m2(f);
++#endif
++}
++#endif
++
+ template <typename T>
+ MSCCLPP_DEVICE_INLINE T clip(T val) {
+   return val;
+@@ -357,10 +393,10 @@
+ MSCCLPP_DEVICE_INLINE __fp8_e5m2 clip(__fp8_e5m2 val) {
+   // FP8 E5M2 has infinities - clamp to max finite value to prevent overflow
+   // Max finite value for E5M2 is 57344.0f (0x7B), min is -57344.0f (0xFB)
+-  float fval = float(val);
++  float fval = mscclpp_fp8e5_to_f32(val);
+   fval = fmaxf(fval, -57344.0f);
+   fval = fminf(fval, 57344.0f);
+-  return __fp8_e5m2(fval);
++  return mscclpp_f32_to_fp8e5(fval);
+ }
+ #endif
+ 
+@@ -430,7 +466,7 @@
+   return UseClip ? clip(result) : result;
+ #else
+   // Fallback for other devices
+-  __fp8_e4m3 result = __fp8_e4m3(float(a) + float(b));
++  __fp8_e4m3 result = mscclpp_f32_to_fp8e4(mscclpp_fp8e4_to_f32(a) + mscclpp_fp8e4_to_f32(b));
+   return UseClip ? clip(result) : result;
+ #endif
+ }
+@@ -503,7 +539,7 @@
+   __fp8_e5m2 result = __fp8_e5m2(__hadd(__half(a), __half(b)));
+   return UseClip ? clip(result) : result;
+ #else
+-  __fp8_e5m2 result = __fp8_e5m2(float(a) + float(b));
++  __fp8_e5m2 result = mscclpp_f32_to_fp8e5(mscclpp_fp8e5_to_f32(a) + mscclpp_fp8e5_to_f32(b));
+   return UseClip ? clip(result) : result;
+ #endif
+ }
+@@ -683,7 +719,7 @@
+ template <>
+ MSCCLPP_DEVICE_INLINE __fp8_e4m3 min(const __fp8_e4m3& a, const __fp8_e4m3& b) {
+ #if defined(MSCCLPP_DEVICE_HIP)
+-  return __fp8_e4m3(fminf(float(a), float(b)));
++  return mscclpp_f32_to_fp8e4(fminf(mscclpp_fp8e4_to_f32(a), mscclpp_fp8e4_to_f32(b)));
+ #else
+   return __fp8_e4m3(__hmin(__half(a), __half(b)));
+ #endif
+@@ -714,7 +750,7 @@
+ template <>
+ MSCCLPP_DEVICE_INLINE __fp8_e5m2 min(const __fp8_e5m2& a, const __fp8_e5m2& b) {
+ #if defined(MSCCLPP_DEVICE_HIP)
+-  return __fp8_e5m2(fminf(float(a), float(b)));
++  return mscclpp_f32_to_fp8e5(fminf(mscclpp_fp8e5_to_f32(a), mscclpp_fp8e5_to_f32(b)));
+ #else
+   return __fp8_e5m2(__hmin(__half(a), __half(b)));
+ #endif

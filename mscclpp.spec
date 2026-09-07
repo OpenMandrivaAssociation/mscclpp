@@ -2,7 +2,7 @@
 
 Name:		mscclpp
 Version:	0.10.0
-Release:	1
+Release:	2
 Summary:	GPU-driven communication stack (MSCCL++)
 License:	MIT
 Group:		System/Libraries
@@ -10,6 +10,8 @@ URL:		https://github.com/microsoft/mscclpp
 Source0:	https://github.com/microsoft/mscclpp/archive/refs/tags/v%{version}.tar.gz#/mscclpp-%{version}.tar.gz
 Patch0:		0001-system-nlohmann-json.patch
 Patch1:		0002-nccl-cstring.patch
+# HIP 7.15 OCP/FNUZ constructors are host-only on the other arch
+Patch2:		0003-hip715-fp8-rdna-fat-binary.patch
 
 BuildRequires:	rocm-rpm-macros
 BuildRequires:	cmake
@@ -50,6 +52,8 @@ export CXXFLAGS
 	-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF \
 	-DMSCCLPP_USE_GDRCOPY=OFF \
 	-DMSCCLPP_BYPASS_GPU_CHECK=ON \
+	-DMSCCLPP_ROCM_USE_FNUZ_FP8=OFF \
+	-DMSCCLPP_GPU_ARCHS="gfx90a;gfx942;gfx1100;gfx1200;gfx1201" \
 	-DROCM_PATH=%{_prefix} \
 	-DCMAKE_PREFIX_PATH=%{_prefix} \
 	-G Ninja
