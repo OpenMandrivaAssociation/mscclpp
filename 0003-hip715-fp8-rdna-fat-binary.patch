@@ -1,11 +1,13 @@
-HIP 7.15 fp8 host/device split for fat gfx942+gfx12 binaries.
+HIP 7.15 fp8 host/device split for fat gfx942+RDNA binaries.
 
 OCP constructors are __host__-only on gfx942; FNUZ ones are
 __host__-only on gfx1200/1201. Convert via gfx942 builtins or
-OCP constructors so RDNA3/4 can be compiled in the same DSO.
+OCP constructors so gfx1100/gfx1200/gfx1201 can share the DSO.
+gfx942 operator+ must bit_cast storage bytes into the OCP
+struct; static_cast<__hip_fp8_storage_t> has no device ctor.
 
---- a/include/mscclpp/gpu_data_types.hpp
-+++ b/include/mscclpp/gpu_data_types.hpp
+--- mscclpp-0.10.0.orig/include/mscclpp/gpu_data_types.hpp	2026-07-22 02:04:20.000000000 +0200
++++ mscclpp-0.10.0/include/mscclpp/gpu_data_types.hpp	2026-09-07 21:36:21.974831312 +0200
 @@ -305,6 +305,42 @@
    return u.t;
  }
@@ -62,7 +64,15 @@ OCP constructors so RDNA3/4 can be compiled in the same DSO.
  }
  #endif
  
-@@ -430,7 +466,7 @@
+@@ -423,14 +459,14 @@
+   asm volatile("v_pk_add_f32 %0, %1, %2"
+                : "=v"(v)
+                : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
+-  return static_cast<__hip_fp8_storage_t>(__builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.x, ival, false));
++  return bit_cast<__fp8_e4m3>(static_cast<__hip_fp8_storage_t>(__builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.x, ival, false)));
+ #elif defined(MSCCLPP_DEVICE_CUDA)
+   // NVIDIA CUDA FP8 addition (CUDA 11.8+)
+   __fp8_e4m3 result = __fp8_e4m3(__hadd(__half(a), __half(b)));
    return UseClip ? clip(result) : result;
  #else
    // Fallback for other devices
@@ -71,7 +81,14 @@ OCP constructors so RDNA3/4 can be compiled in the same DSO.
    return UseClip ? clip(result) : result;
  #endif
  }
-@@ -503,7 +539,7 @@
+@@ -497,13 +533,13 @@
+   asm volatile("v_pk_add_f32 %0, %1, %2"
+                : "=v"(v)
+                : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
+-  return static_cast<__hip_fp8_storage_t>(__builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.x, ival, false));
++  return bit_cast<__fp8_e5m2>(static_cast<__hip_fp8_storage_t>(__builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.x, ival, false)));
+ #elif defined(MSCCLPP_DEVICE_CUDA)
+   // NVIDIA CUDA FP8 addition
    __fp8_e5m2 result = __fp8_e5m2(__hadd(__half(a), __half(b)));
    return UseClip ? clip(result) : result;
  #else
