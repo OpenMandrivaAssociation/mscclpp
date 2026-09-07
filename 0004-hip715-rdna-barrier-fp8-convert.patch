@@ -1,0 +1,165 @@
+HIP 7.15 remaining RDNA fat-binary compile fixes.
+
+gfx1200/gfx1201 dropped s_barrier. OCP default constructors and
+half/fp8 conversions are __host__-only on gfx942, so unions that
+contain those types and the generic to<> static_cast fail there.
+
+--- a/include/mscclpp/gpu.hpp	2026-07-22 02:04:20.000000000 +0200
++++ b/include/mscclpp/gpu.hpp	2026-09-07 22:15:25.856081663 +0200
+@@ -150,7 +150,10 @@
+ #endif  // defined(MSCCLPP_DEVICE_HIP)
+ 
+ // GPU sync threads
+-#if defined(MSCCLPP_DEVICE_HIP)
++// gfx1200/gfx1201 (RDNA4) dropped s_barrier; HIP __syncthreads() emits
++// s_barrier_signal/wait there and keeps the CDNA waitcnt+s_barrier form
++// on gfx9/gfx11.
++#if defined(MSCCLPP_DEVICE_HIP) && !defined(__gfx1200__) && !defined(__gfx1201__)
+ #define __syncshm() asm volatile("s_waitcnt lgkmcnt(0) \n s_barrier");
+ #else
+ #define __syncshm() __syncthreads();
+--- a/include/mscclpp/gpu_data_types.hpp	2026-09-07 22:16:04.670818845 +0200
++++ b/include/mscclpp/gpu_data_types.hpp	2026-09-07 22:16:04.646784976 +0200
+@@ -5,6 +5,7 @@
+ #define MSCCLPP_GPU_DATA_TYPES_HPP_
+ 
+ #include <mscclpp/device.hpp>
++#include <type_traits>
+ 
+ #if defined(MSCCLPP_DEVICE_HIP)
+ 
+@@ -339,6 +340,21 @@
+   return __fp8_e5m2(f);
+ #endif
+ }
++
++template <typename FromE>
++MSCCLPP_DEVICE_INLINE float mscclpp_as_f32(FromE v) {
++  if constexpr (std::is_same_v<FromE, float>) {
++    return v;
++  } else if constexpr (std::is_same_v<FromE, __half>) {
++    return __half2float(v);
++  } else if constexpr (std::is_same_v<FromE, __fp8_e4m3>) {
++    return mscclpp_fp8e4_to_f32(v);
++  } else if constexpr (std::is_same_v<FromE, __fp8_e5m2>) {
++    return mscclpp_fp8e5_to_f32(v);
++  } else {
++    return static_cast<float>(v);
++  }
++}
+ #endif
+ 
+ template <typename T>
+@@ -709,7 +725,28 @@
+     To result;
+ #pragma unroll
+     for (int i = 0; i < N; ++i) {
++#if defined(__FP8_TYPES_EXIST__) && defined(MSCCLPP_DEVICE_HIP)
++      using ToE = typename To::ElementType;
++      using FromE = typename From::ElementType;
++      if constexpr (std::is_same_v<ToE, __fp8_e4m3>) {
++        result.data[i] = mscclpp_f32_to_fp8e4(mscclpp_as_f32(v.data[i]));
++      } else if constexpr (std::is_same_v<ToE, __fp8_e5m2>) {
++        result.data[i] = mscclpp_f32_to_fp8e5(mscclpp_as_f32(v.data[i]));
++      } else if constexpr (std::is_same_v<FromE, __fp8_e4m3> || std::is_same_v<FromE, __fp8_e5m2>) {
++        float f = mscclpp_as_f32(v.data[i]);
++        if constexpr (std::is_same_v<ToE, float>) {
++          result.data[i] = f;
++        } else if constexpr (std::is_same_v<ToE, __half>) {
++          result.data[i] = __float2half(f);
++        } else {
++          result.data[i] = static_cast<ToE>(f);
++        }
++      } else {
++        result.data[i] = static_cast<ToE>(v.data[i]);
++      }
++#else
+       result.data[i] = static_cast<typename To::ElementType>(v.data[i]);
++#endif
+     }
+     return result;
+   }
+@@ -1031,6 +1068,39 @@
+   return result;
+ #endif
+ }
++
++/// f8_e5m2x2 -> f16x2.
++template <>
++MSCCLPP_DEVICE_INLINE f16x2 to<f16x2, f8_e5m2x2>(const f8_e5m2x2& v) {
++#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
++  auto f = __builtin_amdgcn_cvt_pk_f32_bf8(v.storage.__x, 0);
++  f16x2 result;
++  result.data[0] = __float2half(f[0]);
++  result.data[1] = __float2half(f[1]);
++  return result;
++#else
++  f16x2 result;
++  result.data[0] = __float2half(mscclpp_fp8e5_to_f32(v.data[0]));
++  result.data[1] = __float2half(mscclpp_fp8e5_to_f32(v.data[1]));
++  return result;
++#endif
++}
++
++/// f16x2 -> f8_e5m2x2.
++template <>
++MSCCLPP_DEVICE_INLINE f8_e5m2x2 to<f8_e5m2x2, f16x2>(const f16x2& v) {
++#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
++  float f0 = __half2float(v.data[0]);
++  float f1 = __half2float(v.data[1]);
++  uint32_t packed = __builtin_amdgcn_cvt_pk_bf8_f32(f0, f1, 0, false);
++  return bit_cast<f8_e5m2x2>(static_cast<__hip_fp8x2_storage_t>(packed));
++#else
++  f8_e5m2x2 result;
++  result.data[0] = mscclpp_f32_to_fp8e5(__half2float(v.data[0]));
++  result.data[1] = mscclpp_f32_to_fp8e5(__half2float(v.data[1]));
++  return result;
++#endif
++}
+ 
+ #endif  // defined(__FP8_TYPES_EXIST__)
+ 
+--- a/src/ext/collectives/allreduce/allreduce_rsag_pipeline.cu	2026-07-22 02:04:20.000000000 +0200
++++ b/src/ext/collectives/allreduce/allreduce_rsag_pipeline.cu	2026-09-07 22:15:25.856214074 +0200
+@@ -24,15 +24,16 @@
+   if (offset + ElemsPerInt4 <= nelems) {
+     return reinterpret_cast<const int4*>(buff)[i];
+   } else {
+-    union {
+-      int4 i;
+-      T t[ElemsPerInt4];
+-    } vec;
+-    vec.i = make_int4(0, 0, 0, 0);
++    // HIP 7.15 OCP fp8 default ctor is __host__-only on gfx942; do not
++    // default-construct a union that contains T.
++    alignas(int4) unsigned char raw[sizeof(int4)] = {};
++    T* elems = reinterpret_cast<T*>(raw);
+     for (size_t j = 0; j < ElemsPerInt4 && offset + j < nelems; ++j) {
+-      vec.t[j] = buff[offset + j];
++      __builtin_memcpy(elems + j, buff + offset + j, sizeof(T));
+     }
+-    return vec.i;
++    int4 out;
++    __builtin_memcpy(&out, raw, sizeof(out));
++    return out;
+   }
+ }
+ 
+@@ -43,13 +44,11 @@
+   if (offset + ElemsPerInt4 <= nelems) {
+     reinterpret_cast<int4*>(buff)[i] = val;
+   } else {
+-    union {
+-      int4 i;
+-      T t[ElemsPerInt4];
+-    } vec;
+-    vec.i = val;
++    alignas(int4) unsigned char raw[sizeof(int4)];
++    __builtin_memcpy(raw, &val, sizeof(val));
++    const T* elems = reinterpret_cast<const T*>(raw);
+     for (size_t j = 0; j < ElemsPerInt4 && offset + j < nelems; ++j) {
+-      buff[offset + j] = vec.t[j];
++      __builtin_memcpy(buff + offset + j, elems + j, sizeof(T));
+     }
+   }
+ }

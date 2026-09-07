@@ -12,6 +12,7 @@ Patch0:		0001-system-nlohmann-json.patch
 Patch1:		0002-nccl-cstring.patch
 # HIP 7.15 OCP/FNUZ constructors are host-only on the other arch
 Patch2:		0003-hip715-fp8-rdna-fat-binary.patch
+Patch3:		0004-hip715-rdna-barrier-fp8-convert.patch
 
 BuildRequires:	rocm-rpm-macros
 BuildRequires:	cmake
